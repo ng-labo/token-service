@@ -1,0 +1,14 @@
+service:
+  name: Token Provider
+  server:
+    port: 443
+    certfile: /your/cert.pem
+    keyfile: /your/priv.pem
+    httpclient: tornado.curl_httpclient.CurlAsyncHTTPClient
+  app:
+    client_id: your github oauth2 client-id
+    client_secret: your github oauth2 client-secret
+    scope :
+    oauth_url: your oauth2 ap
+  db:
+    file: data/token.db
