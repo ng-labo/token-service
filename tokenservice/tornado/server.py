@@ -14,15 +14,6 @@ def parse_args(args=None):
     )
 
     parser.add_argument(
-        '-p',
-        '--port',
-        type=int,
-        default=8080,
-        help='port number for %(prog)s server to listen; '
-        'default: %(default)s'
-    )
-
-    parser.add_argument(
         '-d',
         '--debug',
         action='store_true',
@@ -45,7 +36,6 @@ def run_server(
     app: tornado.web.Application,
     service: TokenService,
     config: Dict,
-    port: int,
     debug: bool,
 ):
     name = config['service']['name']
@@ -68,6 +58,7 @@ def run_server(
             'certfile': server_config['certfile'],
             'keyfile': server_config['keyfile']}
 
+    port = int(server_config['port'])
     http_server = app.listen(port, '', **http_server_args)
     msg = 'Starting {} on port {} ...'.format(name, port)
     logger.info(msg)
@@ -104,7 +95,6 @@ def main(args=parse_args()):
         app=token_app,
         service=token_service,
         config=config,
-        port=args.port,
         debug=args.debug,
     )
 
