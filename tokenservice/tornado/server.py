@@ -51,19 +51,22 @@ def run_server(
     name = config['service']['name']
     loop = asyncio.get_event_loop()
 
-    tornado.httpclient.AsyncHTTPClient.configure(
-        config['service']['server']['httpclient'])
+    server_config = config['service']['server']
+
+    if server_config.get('httpclient'):
+        tornado.httpclient.AsyncHTTPClient.configure(server_config['httpclient'])
     enable_pretty_logging()
 
     # Start Token service
     service.start()
 
     # Bind http server to port
-    http_server_args = {
-        'decompress_request': True,
-        'ssl_options': {
-            'certfile': config['service']['server']['certfile'],
-            'keyfile': config['service']['server']['keyfile']}}
+    http_server_args = {}
+    http_server_args['decompress_request'] = True
+    if server_config.get('certfile') and server_config.get('keyfile'):
+        http_server_args['ssl_options'] = {
+            'certfile': server_config['certfile'],
+            'keyfile': server_config['keyfile']}
 
     http_server = app.listen(port, '', **http_server_args)
     msg = 'Starting {} on port {} ...'.format(name, port)
