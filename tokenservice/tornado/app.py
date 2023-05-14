@@ -9,6 +9,7 @@ from typing import (
 )
 
 import tornado.web
+import tornado.websocket
 from tornado.httputil import url_concat
 from tokenservice.service import TokenService
 
@@ -135,6 +136,51 @@ class UserQueryHandler(BaseRequestHandler):
             body['result'] = 'false'
         self.write(body)
 
+class WebSocketHandler(BaseRequestHandler, tornado.websocket.WebSocketHandler):
+
+    AUTH_WORD_IN_HEADER = "Sec-WebSocket-Protocol"
+    agensts = []
+
+    def initialize(
+        self,
+        service: TokenService,
+        config: Dict
+    ) -> None:
+        self.src = None
+        return super().initialize(service, config)
+
+    def _parse_auth(self, auth):
+        return [x.strip() for x in auth.split(",")]
+
+    def check_origin(self, origin):
+        #logger.info(str(self.request.headers))
+        auth = self.request.headers.get(WebSocketHandler.AUTH_WORD_IN_HEADER)
+        if auth is None:
+            return False
+        _, src = self._parse_auth(auth)
+        self.src = src
+        # isValidToken(_)
+        return True
+
+    def open(self):
+        for agent in WebSocketHandler.agensts:
+            agent.write_message("#{} joined".format(self.src))
+        if self not in WebSocketHandler.agensts:
+            WebSocketHandler.agensts.append(self)
+
+    def on_close(self):
+        if self in WebSocketHandler.agensts:
+            WebSocketHandler.agensts.remove(self)
+        for agent in WebSocketHandler.agensts:
+            agent.write_message("#{} has gone".format(self.src))
+
+    async def on_message(self, message):
+        logger.info("#message: {}".format(message))
+        if message.startswith("#req"):
+            self.write_message(str([agent.src for agent in WebSocketHandler.agensts]))
+        #for agent in WebSocketHandler.agensts:
+        #    agent.write_message(message)
+
 
 def log_function(handler: tornado.web.RequestHandler) -> None:
     status = handler.get_status()
@@ -164,6 +210,7 @@ def make_tokenservice_app(
             (r"/oauth", GithubOAuth2LoginHandler, dict(service=service, config=app_config)),
             (r"/logout", LogoutHandler, dict(service=service, config=app_config)),
             (r"/query/(?P<id>[a-zA-Z0-9-]+)/?", UserQueryHandler, dict(service=service, config=app_config)),
+            (r"/ws", WebSocketHandler, dict(service=service, config=app_config)),
         ],
         compress_response=True,  # compress textual responses
         #log_function=log_function,  # log_request() uses it to log results
