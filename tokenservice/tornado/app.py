@@ -9,6 +9,7 @@ from typing import (
 )
 
 import tornado.web
+import tokenservice
 from tornado.httputil import url_concat
 from tokenservice.service import TokenService
 
@@ -74,23 +75,16 @@ class DefaultRequestHandler(BaseRequestHandler):
 
 
 class MainHandler(BaseRequestHandler, auth_github.GithubMixin):
-    template = """
-    Login User: {}({})
-    <p>your token is <input type='text' value='{}' id='token' readonly='readonly' size=48>
-    <button onclick="var c=document.getElementById('token');c.select();
-         c.setSelectionRange(0, 99999);navigator.clipboard.writeText(c.value);">Copy</button>
-    <p>expire in {}
-    <p><a href="/logout">Logout</a>
-    """
+
     async def get(self):
         if self.current_user:
             id = self.current_user["login"]
             mytoken, expire = await self.service.get_or_create_token(id)
-            self.write(
-                MainHandler.template.format(
-                    self.current_user["name"], id, mytoken, time.asctime(time.localtime(expire))))
+            self.render("main.html", github_name=self.current_user["name"],
+                                     github_id=id, mytoken=mytoken,
+                                     mytoken_expire=time.asctime(time.localtime(expire)))
         else:
-            self.write('<a href="/oauth">Login</a>')
+            self.render("login.html")
 
 
 class GithubOAuth2LoginHandler(BaseRequestHandler, auth_github.GithubMixin):
@@ -157,9 +151,12 @@ def make_tokenservice_app(
     service = TokenService(config)
     app_config = config['app']
 
+    ui_contents = tokenservice.TOKEN_SERVICE_ROOT_DIR + '/ui-contents'
+
     app = tornado.web.Application(
         [
             # service endpoints
+            (r"/ui/(.*)?", tornado.web.StaticFileHandler, {'path': ui_contents}),
             (r"/", MainHandler, dict(service=service, config=app_config)),
             (r"/oauth", GithubOAuth2LoginHandler, dict(service=service, config=app_config)),
             (r"/logout", LogoutHandler, dict(service=service, config=app_config)),
@@ -176,7 +173,9 @@ def make_tokenservice_app(
         cookie_secret=os.urandom(32),
         xsrf_cookies=True,
         debug=True,
-        autoescape=None
+        autoescape=None,
+        static_path=ui_contents,
+        template_path=ui_contents
     )
 
     return service, app

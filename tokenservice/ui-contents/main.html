@@ -1,0 +1,14 @@
+<html>
+  <head>
+    <title></title>
+  </head>
+  <script type="text/javascript" src="/ui/main.js"></script>
+  <body>
+    Login User: {{ github_name }}({{ github_id }})
+    <p>your token is <input type='text' value='{{ mytoken }}' id='token' readonly='readonly' size=48>
+    <button onclick="var c=document.getElementById('token');c.select();
+         c.setSelectionRange(0, 99999);navigator.clipboard.writeText(c.value);">Copy</button>
+    <p>expire in {{ mytoken_expire }}
+    <p><a href="/logout">Logout</a>
+  </body>
+</html>
