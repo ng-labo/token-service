@@ -10,6 +10,7 @@ from typing import (
 
 import tornado.web
 import tornado.websocket
+import tokenservice
 from tornado.httputil import url_concat
 from tokenservice.service import TokenService
 
@@ -75,23 +76,16 @@ class DefaultRequestHandler(BaseRequestHandler):
 
 
 class MainHandler(BaseRequestHandler, auth_github.GithubMixin):
-    template = """
-    Login User: {}({})
-    <p>your token is <input type='text' value='{}' id='token' readonly='readonly' size=48>
-    <button onclick="var c=document.getElementById('token');c.select();
-         c.setSelectionRange(0, 99999);navigator.clipboard.writeText(c.value);">Copy</button>
-    <p>expire in {}
-    <p><a href="/logout">Logout</a>
-    """
+
     async def get(self):
         if self.current_user:
             id = self.current_user["login"]
             mytoken, expire = await self.service.get_or_create_token(id)
-            self.write(
-                MainHandler.template.format(
-                    self.current_user["name"], id, mytoken, time.asctime(time.localtime(expire))))
+            self.render("main.html", github_name=self.current_user["name"],
+                                     github_id=id, mytoken=mytoken,
+                                     mytoken_expire=time.asctime(time.localtime(expire)))
         else:
-            self.write('<a href="/oauth">Login</a>')
+            self.render("login.html")
 
 
 class GithubOAuth2LoginHandler(BaseRequestHandler, auth_github.GithubMixin):
@@ -123,6 +117,19 @@ class LogoutHandler(BaseRequestHandler):
         self.redirect(self.get_argument("next", "/"))
 
 
+class WsSuppotHandler(BaseRequestHandler):
+    async def get(self):
+        if not self.current_user:
+            self.set_status(403)
+            self.finish()
+            return
+        self.set_header('Content-Type', 'application/json; charset=UTF-8')
+        body = {}
+        body['result'] = 'ok'
+        body['users'] = [agent.src for agent in WebSocketHandler.agensts]
+        self.write(body)
+        
+        
 class UserQueryHandler(BaseRequestHandler):
     async def get(self, id):
         self.set_header('Content-Type', 'application/json; charset=UTF-8')
@@ -153,13 +160,13 @@ class WebSocketHandler(BaseRequestHandler, tornado.websocket.WebSocketHandler):
         return [x.strip() for x in auth.split(",")]
 
     def check_origin(self, origin):
-        #logger.info(str(self.request.headers))
         auth = self.request.headers.get(WebSocketHandler.AUTH_WORD_IN_HEADER)
         if auth is None:
             return False
         _, src = self._parse_auth(auth)
         self.src = src
         # isValidToken(_)
+        self.set_header("Sec-WebSocket-Protocol", src)
         return True
 
     def open(self):
@@ -169,6 +176,7 @@ class WebSocketHandler(BaseRequestHandler, tornado.websocket.WebSocketHandler):
             WebSocketHandler.agensts.append(self)
 
     def on_close(self):
+        logger.info("closed " + self.src)
         if self in WebSocketHandler.agensts:
             WebSocketHandler.agensts.remove(self)
         for agent in WebSocketHandler.agensts:
@@ -203,13 +211,17 @@ def make_tokenservice_app(
     service = TokenService(config)
     app_config = config['app']
 
+    ui_contents = tokenservice.TOKEN_SERVICE_ROOT_DIR + '/ui-contents'
+
     app = tornado.web.Application(
         [
             # service endpoints
+            (r"/ui/(.*)?", tornado.web.StaticFileHandler, {'path': ui_contents}),
             (r"/", MainHandler, dict(service=service, config=app_config)),
             (r"/oauth", GithubOAuth2LoginHandler, dict(service=service, config=app_config)),
             (r"/logout", LogoutHandler, dict(service=service, config=app_config)),
             (r"/query/(?P<id>[a-zA-Z0-9-]+)/?", UserQueryHandler, dict(service=service, config=app_config)),
+            (r"/ask?", WsSuppotHandler, dict(service=service, config=app_config)),
             (r"/ws", WebSocketHandler, dict(service=service, config=app_config)),
         ],
         compress_response=True,  # compress textual responses
@@ -223,7 +235,9 @@ def make_tokenservice_app(
         cookie_secret=os.urandom(32),
         xsrf_cookies=True,
         debug=True,
-        autoescape=None
+        autoescape=None,
+        static_path=ui_contents,
+        template_path=ui_contents
     )
 
     return service, app
