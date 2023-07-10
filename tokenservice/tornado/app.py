@@ -1,5 +1,4 @@
-import logging, time
-import os, traceback
+import logging, os, time, traceback
 from typing import (
     Any,
     Awaitable,
@@ -14,17 +13,16 @@ from tornado.httputil import url_concat
 from tokenservice.service import TokenService
 
 import auth_github
+from tornado.auth import GoogleOAuth2Mixin
+
+from utils import json_encode, json_decode
+
 import logging
 logger = logging.getLogger("token-service")
 logger.setLevel(logging.DEBUG)
 
-
 class BaseRequestHandler(tornado.web.RequestHandler):
-    def initialize(
-        self,
-        service: TokenService,
-        config: Dict
-    ) -> None:
+    def initialize(self, service: TokenService, config: Dict) -> None:
         self.service = service
         self.config = config
 
@@ -61,7 +59,7 @@ class BaseRequestHandler(tornado.web.RequestHandler):
         user_json = self.get_secure_cookie("user")
         if not user_json:
             return None
-        return auth_github.json_decode(user_json)
+        return json_decode(user_json)
 
 
 class DefaultRequestHandler(BaseRequestHandler):
@@ -75,7 +73,6 @@ class DefaultRequestHandler(BaseRequestHandler):
 
 
 class MainHandler(BaseRequestHandler, auth_github.GithubMixin):
-
     async def get(self):
         if self.current_user:
             id = self.current_user["login"]
@@ -99,7 +96,7 @@ class GithubOAuth2LoginHandler(BaseRequestHandler, auth_github.GithubMixin):
                 code=self.get_argument("code"))
             if user:
                 logger.info('logged in user from github: ' + user["name"])
-                self.set_secure_cookie("user", auth_github.json_encode(user))
+                self.set_secure_cookie("user", json_encode(user))
             else:
                 self.clear_cookie("user")
             self.redirect(self.get_argument("next", "/"))
@@ -108,6 +105,44 @@ class GithubOAuth2LoginHandler(BaseRequestHandler, auth_github.GithubMixin):
             redirect_uri=redirect_uri,
             client_id=self.config["client_id"],
             extra_params={"scope": self.config['scope']})
+
+
+class GoogleOAuth2LoginHandler(BaseRequestHandler, GoogleOAuth2Mixin):
+    def initialize(self, service: TokenService, config: Dict)-> None:
+        BaseRequestHandler.initialize(self, service, config)
+        self.settings['google_oauth'] = {}
+        self.settings['google_oauth']['key'] = config['client_id']
+        self.settings['google_oauth']['secret'] = config['client_secret']
+
+    async def get(self):
+        if not self.get_argument('code', False):
+            return self.authorize_redirect(
+                redirect_uri=self.config['oauth_url'],
+                client_id=self.config['client_id'],
+                scope=['profile', 'email'],
+                response_type='code',
+                extra_params={'approval_prompt': 'auto'})
+
+        access_reply = await self.get_authenticated_user(
+            redirect_uri=self.config['oauth_url'],
+            code=self.get_argument('code'))
+
+        httpc = self.get_auth_http_client()
+        resp = await httpc.fetch(
+            url_concat(
+                self._OAUTH_USERINFO_URL,
+                {'access_token': access_reply['access_token']},
+            )
+        )
+
+        user = json_decode(resp.body.decode())
+        if user:
+            logger.info('logged in user from google: ' + user["email"])
+            user['login'] = user['email']
+            self.set_secure_cookie('user', json_encode(user))
+        else:
+            self.clear_cookie("user")
+        self.redirect(self.get_argument("next", "/"))
 
 
 class LogoutHandler(BaseRequestHandler):
@@ -153,15 +188,22 @@ def make_tokenservice_app(
 
     ui_contents = tokenservice.TOKEN_SERVICE_ROOT_DIR + '/ui-contents'
 
+    service_endpoins = [
+        (r"/ui/(.*)?", tornado.web.StaticFileHandler, {'path': ui_contents}),
+        (r"/", MainHandler, dict(service=service, config=app_config)),
+        (r"/oauth", GithubOAuth2LoginHandler, dict(service=service, config=app_config)),
+        (r"/logout", LogoutHandler, dict(service=service, config=app_config)),
+        (r"/query/(?P<id>[a-zA-Z0-9-]+)/?", UserQueryHandler, dict(service=service, config=app_config)),
+    ]
+    if app_config.get('github'):
+        service_endpoins.append((r"/oa2github", GithubOAuth2LoginHandler,
+                                                dict(service=service, config=app_config['github'])))
+    if app_config.get('google'):
+        service_endpoins.append((r"/oa2google", GoogleOAuth2LoginHandler,
+                                                dict(service=service, config=app_config['google'])))
+
     app = tornado.web.Application(
-        [
-            # service endpoints
-            (r"/ui/(.*)?", tornado.web.StaticFileHandler, {'path': ui_contents}),
-            (r"/", MainHandler, dict(service=service, config=app_config)),
-            (r"/oauth", GithubOAuth2LoginHandler, dict(service=service, config=app_config)),
-            (r"/logout", LogoutHandler, dict(service=service, config=app_config)),
-            (r"/query/(?P<id>[a-zA-Z0-9-]+)/?", UserQueryHandler, dict(service=service, config=app_config)),
-        ],
+        service_endpoins,
         compress_response=True,  # compress textual responses
         #log_function=log_function,  # log_request() uses it to log results
         serve_traceback=debug,  # it is passed on as setting to write_error()
