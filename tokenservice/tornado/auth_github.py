@@ -1,21 +1,13 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
-import json
 from urllib.parse import urlencode
 from typing import Any, Dict
 
 from tornado.auth import OAuth2Mixin
-from tornado.escape import to_basestring, parse_qs_bytes, native_str
+from tornado.escape import parse_qs_bytes, native_str
 from tornado.httputil import url_concat
 
-
-def json_encode(value):
-    return json.dumps(value).replace("</", "<\\/")
-
-
-def json_decode(value):
-    return json.loads(to_basestring(value))
-
+from utils import json_encode, json_decode
 
 class GithubMixin(OAuth2Mixin):
     """Github authentication using OAuth2."""
