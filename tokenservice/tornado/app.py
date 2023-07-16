@@ -26,6 +26,7 @@ class BaseRequestHandler(tornado.web.RequestHandler):
     def initialize(self, service: TokenService, config: Dict) -> None:
         self.service = service
         self.config = config
+	self.WEBCONTEXTPATH = config.get('webcontextpath') and config['webcontextpath'] or ""
 
     def prepare(self) -> Optional[Awaitable[None]]:
         msg = 'REQUEST: {method} {uri} ({ip})'.format(
