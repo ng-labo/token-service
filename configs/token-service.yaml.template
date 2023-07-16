@@ -6,6 +6,7 @@ service:
     keyfile: /your/priv.pem
     httpclient: tornado.curl_httpclient.CurlAsyncHTTPClient
   app:
+    webcontextpath:
     client_id: your github oauth2 client-id
     client_secret: your github oauth2 client-secret
     scope :
