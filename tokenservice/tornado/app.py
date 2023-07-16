@@ -25,7 +25,7 @@ class BaseRequestHandler(tornado.web.RequestHandler):
     def initialize(self, service: TokenService, config: Dict) -> None:
         self.service = service
         self.config = config
-	self.WEBCONTEXTPATH = config.get('webcontextpath') and config['webcontextpath'] or ""
+        self.WEBCONTEXTPATH = config.get('webcontextpath') and config['webcontextpath'] or ""
 
     def prepare(self) -> Optional[Awaitable[None]]:
         msg = 'REQUEST: {method} {uri} ({ip})'.format(
@@ -196,12 +196,16 @@ def make_tokenservice_app(
         (r"/logout", LogoutHandler, dict(service=service, config=app_config)),
         (r"/query/(?P<id>[a-zA-Z0-9-]+)/?", UserQueryHandler, dict(service=service, config=app_config)),
     ]
-    if app_config.get('github'):
+    if config.get('oauth2') and config['oauth2'].get('github'):
+        cfg = app_config.copy()
+        cfg.update(config['oauth2']['github'])
         service_endpoins.append((r"/oa2github", GithubOAuth2LoginHandler,
-                                                dict(service=service, config=app_config['github'])))
-    if app_config.get('google'):
+                                                dict(service=service, config=cfg)))
+    if config.get('oauth2') and config['oauth2'].get('google'):
+        cfg = app_config.copy()
+        cfg.update(config['oauth2']['google'])
         service_endpoins.append((r"/oa2google", GoogleOAuth2LoginHandler,
-                                                dict(service=service, config=app_config['google'])))
+                                                dict(service=service, config=cfg)))
 
     app = tornado.web.Application(
         service_endpoins,
