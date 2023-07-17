@@ -4,13 +4,13 @@ from typing import Dict
 import tornado.web
 from tornado.log import enable_pretty_logging
 
-from tokenservice.service import TokenService
-from tokenservice.tornado.app import make_tokenservice_app, logger
+from tokenservice.service import Service
+from tokenservice.tornado.app import make_service_app, logger
 
 
 def parse_args(args=None):
     parser = argparse.ArgumentParser(
-        description='Run Token Server'
+        description='Run Logging Service'
     )
 
     parser.add_argument(
@@ -34,7 +34,7 @@ def parse_args(args=None):
 
 def run_server(
     app: tornado.web.Application,
-    service: TokenService,
+    service: Service,
     config: Dict,
     debug: bool,
 ):
@@ -47,7 +47,7 @@ def run_server(
         tornado.httpclient.AsyncHTTPClient.configure(server_config['httpclient'])
     enable_pretty_logging()
 
-    # Start Token service
+    # Start Logging Service 
     service.start()
 
     # Bind http server to port
@@ -88,12 +88,11 @@ def main(args=parse_args()):
 
     config = yaml.load(args.config.read(), Loader=yaml.SafeLoader)
 
-    token_service, token_app = make_tokenservice_app(
-        config['service'], args.debug)
+    service, app = make_service_app(config['service'], args.debug)
 
     run_server(
-        app=token_app,
-        service=token_service,
+        app=app,
+        service=service,
         config=config,
         debug=args.debug,
     )

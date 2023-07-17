@@ -10,7 +10,8 @@ from typing import (
 import tornado.web
 import tokenservice
 from tornado.httputil import url_concat
-from tokenservice.service import TokenService
+from tokenservice.service import Service
+from tokenservice.logger import LoggerService
 
 import auth_github
 from tornado.auth import GoogleOAuth2Mixin
@@ -22,10 +23,11 @@ logger = logging.getLogger("token-service")
 logger.setLevel(logging.DEBUG)
 
 class BaseRequestHandler(tornado.web.RequestHandler):
-    def initialize(self, service: TokenService, config: Dict) -> None:
+    def initialize(self, service: Service, config: Dict) -> None:
         self.service = service
         self.config = config
         self.WEBCONTEXTPATH = config.get('webcontextpath') and config['webcontextpath'] or ""
+        self.HOMEURI = self.WEBCONTEXTPATH + "/ui"
 
     def prepare(self) -> Optional[Awaitable[None]]:
         msg = 'REQUEST: {method} {uri} ({ip})'.format(
@@ -77,18 +79,17 @@ class MainHandler(BaseRequestHandler, auth_github.GithubMixin):
     async def get(self):
         if self.current_user:
             id = self.current_user["login"]
-            mytoken, expire = await self.service.get_or_create_token(id)
-            self.render("main.html", github_name=self.current_user["name"],
-                                     github_id=id, mytoken=mytoken,
-                                     mytoken_expire=time.asctime(time.localtime(expire)))
+            self.service.checkinfirst(id)
+            self.render("main.html", username=self.current_user["name"],
+                                     userid=id, webapppath=self.WEBCONTEXTPATH)
         else:
-            self.render("login.html")
+            self.render("login.html", webapppath=self.WEBCONTEXTPATH)
 
 
 class GithubOAuth2LoginHandler(BaseRequestHandler, auth_github.GithubMixin):
     async def get(self):
         redirect_uri = url_concat(
-            self.config['oauth_url'], {"next": self.get_argument('next', '/')})
+            self.config['oauth_url'], {"next": self.get_argument("next", self.HOMEURI)})
         if self.get_argument("code", False):
             user = await self.get_authenticated_user(
                 redirect_uri=redirect_uri,
@@ -100,16 +101,16 @@ class GithubOAuth2LoginHandler(BaseRequestHandler, auth_github.GithubMixin):
                 self.set_secure_cookie("user", json_encode(user))
             else:
                 self.clear_cookie("user")
-            self.redirect(self.get_argument("next", "/"))
+            self.redirect(self.get_argument("next", self.HOMEURI))
             return
         self.authorize_redirect(
             redirect_uri=redirect_uri,
             client_id=self.config["client_id"],
-            extra_params={"scope": self.config['scope']})
+            extra_params={"scope": self.config["scope"]})
 
 
 class GoogleOAuth2LoginHandler(BaseRequestHandler, GoogleOAuth2Mixin):
-    def initialize(self, service: TokenService, config: Dict)-> None:
+    def initialize(self, service: Service, config: Dict)-> None:
         BaseRequestHandler.initialize(self, service, config)
         self.settings['google_oauth'] = {}
         self.settings['google_oauth']['key'] = config['client_id']
@@ -143,13 +144,13 @@ class GoogleOAuth2LoginHandler(BaseRequestHandler, GoogleOAuth2Mixin):
             self.set_secure_cookie('user', json_encode(user))
         else:
             self.clear_cookie("user")
-        self.redirect(self.get_argument("next", "/"))
+        self.redirect(self.get_argument("next", self.HOMEURI))
 
 
 class LogoutHandler(BaseRequestHandler):
     def get(self):
         self.clear_cookie("user")
-        self.redirect(self.get_argument("next", "/"))
+        self.redirect(self.get_argument("next", self.HOMEURI))
 
 
 class UserQueryHandler(BaseRequestHandler):
@@ -158,13 +159,37 @@ class UserQueryHandler(BaseRequestHandler):
         body = {}
         body['id'] = str(id)
         token = self.get_argument("token", False)
-        logger.debug("token={}".format(token))
-        if token and self.service.isvalid(id, token):
-            body['result'] = 'ok'
-        else:
-            body['result'] = 'false'
+        method = self.get_argument("method", False)
+        logger.debug("token={} method={}".format(token, method))
+        body['result'] = 'false'
+
+        if not token or not self.service.isvalid(id, token):
+            self.write(body)
+            return
+
+        if not method in ['loggeddays', 'positions']:
+            self.write(body)
+            return
+
+        if method == 'loggeddays':
+            ret = self.service.getloggeddays(id)
+            body['days'] = ret
+            body['result'] = 'true'
+        elif method == 'positions':
+            logdt = self.get_argument("logdt")
+            if not logdt:
+                self.write(body)
+                return
+            ret = self.service.getlog(id, logdt)
+            body['positions'] = ret
+            body['result'] = 'true'
         self.write(body)
 
+class UserLoggingHandler(BaseRequestHandler):
+    def post(self, id):
+        self.set_header('Content-Type', 'application/json; charset=UTF-8')
+        logbody = self.request.body
+        self.service.logdata(id, logbody) # pass in raw
 
 def log_function(handler: tornado.web.RequestHandler) -> None:
     status = handler.get_status()
@@ -180,20 +205,47 @@ def log_function(handler: tornado.web.RequestHandler) -> None:
     logger.info(msg)
 
 
-def make_tokenservice_app(
-    config: Dict,
-    debug: bool
-) -> Tuple[TokenService, tornado.web.Application]:
-    service = TokenService(config)
+def make_service_app(config: Dict, debug: bool) -> Tuple[LoggerService, tornado.web.Application]:
+    if config['id'] == 'ui':
+        return make_ui_app(config, debug)
+    if config['id'] == 'logger':
+        return make_logger_app(config, debug)
+    raise RuntimeError
+
+def make_logger_app(config: Dict, debug: bool) -> Tuple[LoggerService, tornado.web.Application]:
+    service = LoggerService(config)
+    app_config = config['app']
+    service_endpoins = [
+        (r"/log/(?P<id>[a-zA-Z0-9-]+)/?", UserLoggingHandler, dict(service=service, config=app_config)),
+    ]
+    app = tornado.web.Application(
+        service_endpoins,
+        compress_response=False,
+        serve_traceback=debug,  # it is passed on as setting to write_error()
+        default_handler_class=DefaultRequestHandler,
+        default_handler_args={
+            'status_code': 404,
+            'message': 'Unknown Endpoint'
+        },
+        cookie_secret=os.urandom(32),
+        xsrf_cookies=False,
+        debug=debug,
+        autoescape=None
+    )
+
+    return service, app
+
+def make_ui_app(config: Dict, debug: bool) -> Tuple[LoggerService, tornado.web.Application]:
+    service = LoggerService(config)
     app_config = config['app']
 
     ui_contents = tokenservice.TOKEN_SERVICE_ROOT_DIR + '/ui-contents'
+    template = tokenservice.TOKEN_SERVICE_ROOT_DIR + '/template'
 
     service_endpoins = [
+        (r"/ui", MainHandler, dict(service=service, config=app_config)),
+        (r"/ui/logout", LogoutHandler, dict(service=service, config=app_config)),
         (r"/ui/(.*)?", tornado.web.StaticFileHandler, {'path': ui_contents}),
-        (r"/", MainHandler, dict(service=service, config=app_config)),
-        (r"/oauth", GithubOAuth2LoginHandler, dict(service=service, config=app_config)),
-        (r"/logout", LogoutHandler, dict(service=service, config=app_config)),
         (r"/query/(?P<id>[a-zA-Z0-9-]+)/?", UserQueryHandler, dict(service=service, config=app_config)),
     ]
     if config.get('oauth2') and config['oauth2'].get('github'):
@@ -219,10 +271,10 @@ def make_tokenservice_app(
         },
         cookie_secret=os.urandom(32),
         xsrf_cookies=True,
-        debug=True,
+        debug=debug,
         autoescape=None,
         static_path=ui_contents,
-        template_path=ui_contents
+        template_path=template
     )
 
     return service, app
