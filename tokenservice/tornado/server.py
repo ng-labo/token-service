@@ -4,7 +4,7 @@ from typing import Dict
 import tornado.web
 from tornado.log import enable_pretty_logging
 
-from tokenservice.service import TokenService
+from tokenservice.service import Service
 from tokenservice.tornado.app import make_tokenservice_app, logger
 
 
@@ -34,7 +34,7 @@ def parse_args(args=None):
 
 def run_server(
     app: tornado.web.Application,
-    service: TokenService,
+    service: Service,
     config: Dict,
     debug: bool,
 ):

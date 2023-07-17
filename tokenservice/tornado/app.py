@@ -11,7 +11,8 @@ import tornado.web
 import tornado.websocket
 import tokenservice
 from tornado.httputil import url_concat
-from tokenservice.service import TokenService
+from tokenservice.service import Service
+from tokenservice.token import TokenService
 
 import auth_github
 from tornado.auth import GoogleOAuth2Mixin
@@ -23,7 +24,7 @@ logger = logging.getLogger("token-service")
 logger.setLevel(logging.DEBUG)
 
 class BaseRequestHandler(tornado.web.RequestHandler):
-    def initialize(self, service: TokenService, config: Dict) -> None:
+    def initialize(self, service: Service, config: Dict) -> None:
         self.service = service
         self.config = config
         self.WEBCONTEXTPATH = config.get('webcontextpath') and config['webcontextpath'] or ""
@@ -110,7 +111,7 @@ class GithubOAuth2LoginHandler(BaseRequestHandler, auth_github.GithubMixin):
 
 
 class GoogleOAuth2LoginHandler(BaseRequestHandler, GoogleOAuth2Mixin):
-    def initialize(self, service: TokenService, config: Dict)-> None:
+    def initialize(self, service: Service, config: Dict)-> None:
         BaseRequestHandler.initialize(self, service, config)
         self.settings['google_oauth'] = {}
         self.settings['google_oauth']['key'] = config['client_id']
@@ -243,7 +244,7 @@ def log_function(handler: tornado.web.RequestHandler) -> None:
 def make_tokenservice_app(
     config: Dict,
     debug: bool
-) -> Tuple[TokenService, tornado.web.Application]:
+) -> Tuple[Service, tornado.web.Application]:
     service = TokenService(config)
     app_config = config['app']
 
