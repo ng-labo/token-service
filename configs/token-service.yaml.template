@@ -16,6 +16,10 @@ service:
       client_secret: your google oauth2 client-secret
       scope :
       oauth_url: your oauth2 ap
+  oauth:
+    twitter:
+      client_id: your twitter oauth client-id
+      client_secret: your twitter oauth client-secret
   app  :
     webcontextpath:
   db:
