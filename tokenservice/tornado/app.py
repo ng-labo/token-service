@@ -16,6 +16,7 @@ from tokenservice.token import TokenService
 
 import auth_github
 from tornado.auth import GoogleOAuth2Mixin
+from tornado.auth import TwitterMixin
 
 from utils import json_encode, json_decode
 
@@ -75,7 +76,7 @@ class DefaultRequestHandler(BaseRequestHandler):
         )
 
 
-class MainHandler(BaseRequestHandler, auth_github.GithubMixin):
+class MainHandler(BaseRequestHandler):
     async def get(self):
         if self.current_user:
             id = self.current_user["login"]
@@ -99,7 +100,7 @@ class GithubOAuth2LoginHandler(BaseRequestHandler, auth_github.GithubMixin):
                 code=self.get_argument("code"))
             if user:
                 logger.info('logged in user from github: ' + user["name"])
-                self.set_secure_cookie("user", json_encode(user))
+                self.set_signed_cookie("user", json_encode(user))
             else:
                 self.clear_cookie("user")
             self.redirect(self.get_argument("next", "/"))
@@ -142,10 +143,38 @@ class GoogleOAuth2LoginHandler(BaseRequestHandler, GoogleOAuth2Mixin):
         if user:
             logger.info('logged in user from google: ' + user["email"])
             user['login'] = user['email']
-            self.set_secure_cookie('user', json_encode(user))
+            self.set_signed_cookie('user', json_encode(user))
         else:
             self.clear_cookie("user")
         self.redirect(self.get_argument("next", "/"))
+
+
+class TwitterOAuthLoginHandler(BaseRequestHandler, TwitterMixin):
+    def initialize(self, service: Service, config: Dict)-> None:
+        BaseRequestHandler.initialize(self, service, config)
+        self.settings['twitter_consumer_key'] = config['client_id']
+        self.settings['twitter_consumer_secret'] = config['client_secret']
+
+    async def get(self):
+        if self.get_argument("oauth_token", None):
+            user = await self.get_authenticated_user()
+            # Save the user using e.g. set_signed_cookie()
+            if user:
+                # their cookie are too many !!!
+                cookie = {}
+                cookie['username'] = user['username']
+                cookie['id'] = user['id']
+                cookie['login'] = user['username']
+                cookie['name'] = user['username']
+                cookie['access_token'] = user['access_token']
+                logger.info('logged in user from twitter: ' + cookie['username'])
+                self.set_signed_cookie("user", json_encode(cookie))
+            else:
+                self.clear_cookie("user")
+            self.redirect(self.get_argument("next", "/"))
+            return
+        else:
+            await self.authorize_redirect()
 
 
 class LogoutHandler(BaseRequestHandler):
@@ -268,6 +297,12 @@ def make_tokenservice_app(
         cfg = app_config.copy()
         cfg.update(config['oauth2']['google'])
         service_endpoins.append((r"/oa2google", GoogleOAuth2LoginHandler,
+                                                dict(service=service, config=cfg)))
+
+    if config.get('oauth') and config['oauth'].get('twitter'):
+        cfg = app_config.copy()
+        cfg.update(config['oauth']['twitter'])
+        service_endpoins.append((r"/oatwitter", TwitterOAuthLoginHandler,
                                                 dict(service=service, config=cfg)))
 
     app = tornado.web.Application(
