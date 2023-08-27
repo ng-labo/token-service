@@ -14,6 +14,7 @@ from tokenservice.service import Service
 from tokenservice.token import TokenService
 
 import auth_github
+import auth_hatena
 from tornado.auth import GoogleOAuth2Mixin
 from tornado.auth import TwitterMixin
 
@@ -80,8 +81,8 @@ class MainHandler(BaseRequestHandler):
         if self.current_user:
             id = self.current_user["login"]
             mytoken, expire = await self.service.get_or_create_token(id)
-            self.render("main.html", github_name=self.current_user["name"],
-                                     github_id=id, mytoken=mytoken,
+            self.render("main.html", login=self.current_user["login"],
+                                     id=id, mytoken=mytoken,
                                      mytoken_expire=time.asctime(time.localtime(expire)))
         else:
             self.render("login.html")
@@ -98,6 +99,8 @@ class GithubOAuth2LoginHandler(BaseRequestHandler, auth_github.GithubMixin):
                 client_secret=self.config["client_secret"],
                 code=self.get_argument("code"))
             if user:
+                user['signin'] = 'github'
+                # user['login'] has been set
                 logger.info('logged in user from github: ' + user["name"])
                 self.set_signed_cookie("user", json_encode(user))
             else:
@@ -140,8 +143,9 @@ class GoogleOAuth2LoginHandler(BaseRequestHandler, GoogleOAuth2Mixin):
 
         user = json_decode(resp.body.decode())
         if user:
-            logger.info('logged in user from google: ' + user["email"])
+            user['signin'] = 'google'
             user['login'] = user['email']
+            logger.info('logged in user from google: ' + user["name"])
             self.set_signed_cookie('user', json_encode(user))
         else:
             self.clear_cookie("user")
@@ -161,12 +165,12 @@ class TwitterOAuthLoginHandler(BaseRequestHandler, TwitterMixin):
             if user:
                 # their cookie are too many !!!
                 cookie = {}
-                cookie['username'] = user['username']
+                cookie['signin'] = 'twitter'
+                cookie['login'] = user['screen_name']
+                cookie['name'] = user['name']
                 cookie['id'] = user['id']
-                cookie['login'] = user['username']
-                cookie['name'] = user['username']
                 cookie['access_token'] = user['access_token']
-                logger.info('logged in user from twitter: ' + cookie['username'])
+                logger.info('logged in user from twitter: ' + cookie['name'])
                 self.set_signed_cookie("user", json_encode(cookie))
             else:
                 self.clear_cookie("user")
@@ -174,6 +178,34 @@ class TwitterOAuthLoginHandler(BaseRequestHandler, TwitterMixin):
             return
         else:
             await self.authorize_redirect()
+
+
+class HatenaOAuthLoginHandler(BaseRequestHandler, auth_hatena.HatenaMixin):
+    def initialize(self, service: Service, config: Dict)-> None:
+        BaseRequestHandler.initialize(self, service, config)
+        self.settings['hatena_consumer_key'] = config['client_id']
+        self.settings['hatena_consumer_secret'] = config['client_secret']
+
+    async def get(self):
+        if self.get_argument("oauth_token", None) and self.get_argument("oauth_verifier", None):
+            #user = await self.get_authenticated_user(oauth_token=self.get_argument("oauth_token"), oauth_verifier=self.get_argument("oauth_verifier"))
+            user = await self.get_authenticated_user()
+            # Save the user using e.g. set_signed_cookie()
+            if user:
+                cookie = {}
+                cookie['signin'] = 'hatena'
+                cookie['name'] = user['display_name']
+                cookie['login'] = user['display_name']
+                cookie['id'] = user['display_name']
+                cookie['access_token'] = user['access_token']
+                logger.info('logged in user from hatena: ' + cookie['name'])
+                self.set_signed_cookie("user", json_encode(cookie))
+            else:
+                self.clear_cookie("user")
+            self.redirect(self.get_argument("next", "/"))
+            return
+        else:
+            await self.authorize_redirect(callback_uri="/oahatena")
 
 
 class LogoutHandler(BaseRequestHandler):
@@ -242,6 +274,12 @@ def make_tokenservice_app(
         cfg.update(config['oauth']['twitter'])
         service_endpoins.append((r"/oatwitter", TwitterOAuthLoginHandler,
                                                 dict(service=service, config=cfg)))
+
+    if config.get('oauth') and config['oauth'].get('hatena'):
+        cfg = app_config.copy()
+        cfg.update(config['oauth']['hatena'])
+        service_endpoins.append((r"/oahatena", HatenaOAuthLoginHandler,
+                                               dict(service=service, config=cfg)))
 
     app = tornado.web.Application(
         service_endpoins,
